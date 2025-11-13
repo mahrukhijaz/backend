@@ -1,0 +1,1760 @@
+{
+  "name": "Multi-LLM Query Processing System",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "register-user",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-user-registration",
+      "name": "Webhook - User Registration",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 300],
+      "webhookId": "register-user"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "submit-query",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-submit-query",
+      "name": "Webhook - Submit Query",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 800],
+      "webhookId": "submit-query"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "add-funds",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-add-funds",
+      "name": "Webhook - Add Funds",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 2800],
+      "webhookId": "add-funds"
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "get-chat-history/:userId",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-get-chat-history",
+      "name": "Webhook - Get Chat History",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 3200],
+      "webhookId": "get-chat-history"
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "table": "users",
+        "columns": "username, password_hash, email, phone, address, industry, profession, trial_balance, created_at",
+        "values": "={{ $json.username }},={{ $json.password_hash }},={{ $json.email }},={{ $json.phone }},={{ $json.address }},={{ $json.industry }},={{ $json.profession }},20.00,={{ $now }}"
+      },
+      "id": "db-create-user",
+      "name": "DB - Create User",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [550, 300],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "PostgreSQL Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": true, \"userId\": $json.id, \"message\": \"Account created successfully with $20 trial balance\", \"balance\": 20.00 } }}"
+      },
+      "id": "respond-registration-success",
+      "name": "Respond - Registration Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "mode": "select",
+        "table": "users",
+        "where": "id = {{ $json.userId }}",
+        "returnAll": false,
+        "limit": 1
+      },
+      "id": "db-check-user-balance",
+      "name": "DB - Check User Balance",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [550, 800],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "PostgreSQL Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.trial_balance }}",
+              "operation": "equal",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "if-balance-zero",
+      "name": "IF - Balance = 0",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [850, 800]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": \"Account balance is too low for this query. Please add funds to continue using. Minimum $20 USD.\" } }}"
+      },
+      "id": "respond-insufficient-balance",
+      "name": "Respond - Insufficient Balance",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1150, 700]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.trial_balance }}",
+              "operation": "smaller",
+              "value2": 2
+            }
+          ]
+        }
+      },
+      "id": "if-balance-low",
+      "name": "IF - Balance < 2",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1150, 900]
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = new Date();\nconst date = now.toISOString().split('T')[0];\nconst userId = $input.item.json.userId;\nconst queryText = $input.item.json.query;\n\n// Generate topic using first 5 words or LLM summary placeholder\nconst words = queryText.split(' ').slice(0, 5).join('_').replace(/[^a-zA-Z0-9_]/g, '');\nconst topic = words || 'query';\n\nconst folderPath = `${userId}/${date}_${topic}`;\n\nreturn {\n  json: {\n    ...($input.item.json),\n    folderPath: folderPath,\n    date: date,\n    topic: topic,\n    queryId: `${userId}_${Date.now()}`\n  }\n};"
+      },
+      "id": "code-generate-folder-path",
+      "name": "Code - Generate Query Folder Path",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 1000]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "={{ $json.folderPath }}/user_query.txt",
+        "data": "={{ $json.query }}"
+      },
+      "id": "storage-save-query",
+      "name": "Storage - Save User Query",
+      "type": "n8n-nodes-base.awsS3",
+      "typeVersion": 1,
+      "position": [1750, 1000],
+      "credentials": {
+        "aws": {
+          "id": "2",
+          "name": "AWS S3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "={{ $json.folderPath }}/attachments/{{ $json.attachmentName }}",
+        "data": "={{ $json.attachmentData }}"
+      },
+      "id": "storage-save-attachments",
+      "name": "Storage - Save Attachments",
+      "type": "n8n-nodes-base.awsS3",
+      "typeVersion": 1,
+      "position": [1750, 1150],
+      "credentials": {
+        "aws": {
+          "id": "2",
+          "name": "AWS S3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "select",
+        "table": "query_memory",
+        "where": "user_id = {{ $json.userId }}",
+        "returnAll": true,
+        "options": {
+          "orderBy": "created_at DESC",
+          "limit": 10
+        }
+      },
+      "id": "db-search-memory-rag",
+      "name": "DB - Search Memory (RAG)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [2050, 1000],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "PostgreSQL Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const memoryData = $input.all().map(item => {\n  return {\n    query: item.json.query_text,\n    response: item.json.final_deliverable,\n    date: item.json.created_at\n  };\n});\n\nconst contextPrompt = memoryData.length > 0 \n  ? `\\n\\nRelevant context from user's past queries:\\n${JSON.stringify(memoryData, null, 2)}`\n  : '';\n\nreturn {\n  json: {\n    ...($input.first().json),\n    memoryContext: contextPrompt,\n    relevantMemories: memoryData\n  }\n};"
+      },
+      "id": "code-prepare-rag-context",
+      "name": "Code - Prepare RAG Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2350, 1000]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4",
+        "messages": {
+          "values": [
+            {
+              "role": "user",
+              "content": "={{ $json.query }}{{ $json.memoryContext }}"
+            }
+          ]
+        }
+      },
+      "id": "llm-chatgpt-5",
+      "name": "LLM - ChatGPT 5",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1.3,
+      "position": [2650, 800],
+      "credentials": {
+        "openAiApi": {
+          "id": "3",
+          "name": "OpenAI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "claude-sonnet-4-5",
+        "messages": {
+          "values": [
+            {
+              "role": "user",
+              "content": "={{ $json.query }}{{ $json.memoryContext }}"
+            }
+          ]
+        }
+      },
+      "id": "llm-claude-sonnet-45",
+      "name": "LLM - Claude Sonnet 4.5",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.7,
+      "position": [2650, 950],
+      "credentials": {
+        "anthropicApi": {
+          "id": "4",
+          "name": "Anthropic"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "grok-4.0",
+        "messages": {
+          "values": [
+            {
+              "role": "user",
+              "content": "={{ $json.query }}{{ $json.memoryContext }}"
+            }
+          ]
+        }
+      },
+      "id": "llm-grok-40",
+      "name": "LLM - Grok 4.0",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2650, 1100],
+      "parameters": {
+        "url": "https://api.x.ai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "values": [
+            {
+              "name": "model",
+              "value": "grok-4.0"
+            },
+            {
+              "name": "messages",
+              "value": "={{ [{\"role\": \"user\", \"content\": $json.query + $json.memoryContext}] }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "gemini-2.5-pro",
+        "messages": {
+          "values": [
+            {
+              "role": "user",
+              "content": "={{ $json.query }}{{ $json.memoryContext }}"
+            }
+          ]
+        }
+      },
+      "id": "llm-gemini-25",
+      "name": "LLM - Gemini 2.5",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2650, 1250],
+      "parameters": {
+        "url": "https://generativelanguage.googleapis.com/v1/models/gemini-2.5-pro:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "values": [
+            {
+              "name": "contents",
+              "value": "={{ [{\"parts\": [{\"text\": $json.query + $json.memoryContext}]}] }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "mergeByPosition"
+      },
+      "id": "merge-llm-outputs",
+      "name": "Merge - LLM Outputs",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [2950, 1000]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst gptOutput = item.json.gpt_response || '';\nconst claudeOutput = item.json.claude_response || '';\nconst grokOutput = item.json.grok_response || '';\nconst geminiOutput = item.json.gemini_response || '';\n\nconst folderPath = item.json.folderPath;\n\nreturn [\n  {\n    json: {\n      ...item.json,\n      gptOutput,\n      claudeOutput,\n      grokOutput,\n      geminiOutput,\n      allOutputs: {\n        chatgpt: gptOutput,\n        claude: claudeOutput,\n        grok: grokOutput,\n        gemini: geminiOutput\n      }\n    }\n  }\n];"
+      },
+      "id": "code-structure-llm-outputs",
+      "name": "Code - Structure LLM Outputs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3250, 1000]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "={{ $json.folderPath }}/llm_outputs/chatgpt_output.txt",
+        "data": "={{ $json.gptOutput }}"
+      },
+      "id": "storage-save-gpt-output",
+      "name": "Storage - Save GPT Output",
+      "type": "n8n-nodes-base.awsS3",
+      "typeVersion": 1,
+      "position": [3550, 850],
+      "credentials": {
+        "aws": {
+          "id": "2",
+          "name": "AWS S3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "={{ $json.folderPath }}/llm_outputs/claude_output.txt",
+        "data": "={{ $json.claudeOutput }}"
+      },
+      "id": "storage-save-claude-output",
+      "name": "Storage - Save Claude Output",
+      "type": "n8n-nodes-base.awsS3",
+      "typeVersion": 1,
+      "position": [3550, 1000],
+      "credentials": {
+        "aws": {
+          "id": "2",
+          "name": "AWS S3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "={{ $json.folderPath }}/llm_outputs/grok_output.txt",
+        "data": "={{ $json.grokOutput }}"
+      },
+      "id": "storage-save-grok-output",
+      "name": "Storage - Save Grok Output",
+      "type": "n8n-nodes-base.awsS3",
+      "typeVersion": 1,
+      "position": [3550, 1150],
+      "credentials": {
+        "aws": {
+          "id": "2",
+          "name": "AWS S3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "={{ $json.folderPath }}/llm_outputs/gemini_output.txt",
+        "data": "={{ $json.geminiOutput }}"
+      },
+      "id": "storage-save-gemini-output",
+      "name": "Storage - Save Gemini Output",
+      "type": "n8n-nodes-base.awsS3",
+      "typeVersion": 1,
+      "position": [3550, 1300],
+      "credentials": {
+        "aws": {
+          "id": "2",
+          "name": "AWS S3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "claude-sonnet-4-5",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a first moderator using Proprietary PanelPrompt consolidation and analysis. Your task is to consolidate the outputs from multiple LLMs and generate a comprehensive analysis."
+            },
+            {
+              "role": "user",
+              "content": "User Query: {{ $json.query }}\\n\\nLLM Outputs:\\n\\nChatGPT: {{ $json.gptOutput }}\\n\\nClaude: {{ $json.claudeOutput }}\\n\\nGrok: {{ $json.grokOutput }}\\n\\nGemini: {{ $json.geminiOutput }}\\n\\nPlease consolidate these outputs into a comprehensive initial report."
+            }
+          ]
+        }
+      },
+      "id": "moderator-1-consolidation",
+      "name": "Moderator 1 - Initial Consolidation",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.7,
+      "position": [3850, 1000],
+      "credentials": {
+        "anthropicApi": {
+          "id": "4",
+          "name": "Anthropic"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const consolidatedReport = $input.item.json.output || $input.item.json.text || '';\nconst queryData = $input.item.json;\n\nreturn {\n  json: {\n    ...queryData,\n    initialConsolidatedReport: consolidatedReport\n  }\n};"
+      },
+      "id": "code-extract-consolidation",
+      "name": "Code - Extract Consolidation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4150, 1000]
+    },
+    {
+      "parameters": {
+        "model": "claude-sonnet-4-5",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a first moderator performing analysis on the consolidated report. Generate a detailed consolidation analysis report."
+            },
+            {
+              "role": "user",
+              "content": "User Query: {{ $json.query }}\\n\\nInitial Consolidated Report: {{ $json.initialConsolidatedReport }}\\n\\nPlease provide a detailed analysis of this consolidation."
+            }
+          ]
+        }
+      },
+      "id": "moderator-1-analysis",
+      "name": "Moderator 1 - Consolidation Analysis",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.7,
+      "position": [4450, 1000],
+      "credentials": {
+        "anthropicApi": {
+          "id": "4",
+          "name": "Anthropic"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const analysisReport = $input.item.json.output || $input.item.json.text || '';\nconst queryData = $input.item.json;\n\nreturn {\n  json: {\n    ...queryData,\n    initialConsolidationAnalysis: analysisReport\n  }\n};"
+      },
+      "id": "code-extract-analysis",
+      "name": "Code - Extract Analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4750, 1000]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "={{ $json.folderPath }}/{{ $json.date }}_{{ $json.topic }}_Initial_Consolidated_Report.txt",
+        "data": "={{ $json.initialConsolidatedReport }}"
+      },
+      "id": "storage-save-initial-report",
+      "name": "Storage - Save Initial Consolidated Report",
+      "type": "n8n-nodes-base.awsS3",
+      "typeVersion": 1,
+      "position": [5050, 900],
+      "credentials": {
+        "aws": {
+          "id": "2",
+          "name": "AWS S3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "={{ $json.folderPath }}/{{ $json.date }}_{{ $json.topic }}_Initial_Consolidation_Analysis_Report.txt",
+        "data": "={{ $json.initialConsolidationAnalysis }}"
+      },
+      "id": "storage-save-analysis-report",
+      "name": "Storage - Save Analysis Report",
+      "type": "n8n-nodes-base.awsS3",
+      "typeVersion": 1,
+      "position": [5050, 1100],
+      "credentials": {
+        "aws": {
+          "id": "2",
+          "name": "AWS S3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.parallelwebsystems.com/v1/verify",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "values": [
+            {
+              "name": "query",
+              "value": "={{ $json.query }}"
+            },
+            {
+              "name": "initialReport",
+              "value": "={{ $json.initialConsolidatedReport }}"
+            },
+            {
+              "name": "analysisReport",
+              "value": "={{ $json.initialConsolidationAnalysis }}"
+            },
+            {
+              "name": "prompt",
+              "value": "Proprietary PanelPrompt PWSTCore verification"
+            }
+          ]
+        }
+      },
+      "id": "moderator-2-verification",
+      "name": "Moderator 2 - PWST Core Verification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [5350, 1000]
+    },
+    {
+      "parameters": {
+        "jsCode": "const verificationResults = $input.item.json.verification || $input.item.json.result || JSON.stringify($input.item.json);\nconst queryData = $input.item.json;\n\nreturn {\n  json: {\n    ...queryData,\n    verificationResults: verificationResults\n  }\n};"
+      },
+      "id": "code-extract-verification",
+      "name": "Code - Extract Verification Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [5650, 1000]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "={{ $json.folderPath }}/{{ $json.date }}_{{ $json.topic }}_Initial_Consolidated_Report_Verification.txt",
+        "data": "={{ $json.verificationResults }}"
+      },
+      "id": "storage-save-verification",
+      "name": "Storage - Save Verification Results",
+      "type": "n8n-nodes-base.awsS3",
+      "typeVersion": 1,
+      "position": [5950, 1000],
+      "credentials": {
+        "aws": {
+          "id": "2",
+          "name": "AWS S3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "claude-sonnet-4-5",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are the first moderator using Proprietary PanelPrompt Final Deliverable. Generate the final comprehensive deliverable report."
+            },
+            {
+              "role": "user",
+              "content": "User Query: {{ $json.query }}\\n\\nInitial Consolidated Report: {{ $json.initialConsolidatedReport }}\\n\\nInitial Consolidation Analysis: {{ $json.initialConsolidationAnalysis }}\\n\\nVerification Results: {{ $json.verificationResults }}\\n\\nPlease generate the final deliverable report."
+            }
+          ]
+        }
+      },
+      "id": "moderator-1-final-deliverable",
+      "name": "Moderator 1 - Final Deliverable",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.7,
+      "position": [6250, 1000],
+      "credentials": {
+        "anthropicApi": {
+          "id": "4",
+          "name": "Anthropic"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const finalDeliverable = $input.item.json.output || $input.item.json.text || '';\nconst queryData = $input.item.json;\n\nreturn {\n  json: {\n    ...queryData,\n    finalDeliverableReport: finalDeliverable\n  }\n};"
+      },
+      "id": "code-extract-final-deliverable",
+      "name": "Code - Extract Final Deliverable",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [6550, 1000]
+    },
+    {
+      "parameters": {
+        "model": "claude-sonnet-4-5",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Generate a detailed audit trail of the report generation process."
+            },
+            {
+              "role": "user",
+              "content": "Create an audit trail for the following query processing:\\n\\nQuery: {{ $json.query }}\\nLLMs Used: ChatGPT 5, Claude Sonnet 4.5, Grok 4.0, Gemini 2.5\\nConsolidation Steps: Initial Report, Analysis, Verification, Final Deliverable\\nTimestamp: {{ $now }}"
+            }
+          ]
+        }
+      },
+      "id": "generate-audit-trail",
+      "name": "Generate Audit Trail",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.7,
+      "position": [6550, 1200],
+      "credentials": {
+        "anthropicApi": {
+          "id": "4",
+          "name": "Anthropic"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const auditTrail = $input.item.json.output || $input.item.json.text || '';\nconst queryData = $input.item.json;\n\nreturn {\n  json: {\n    ...queryData,\n    auditTrail: auditTrail\n  }\n};"
+      },
+      "id": "code-extract-audit-trail",
+      "name": "Code - Extract Audit Trail",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [6850, 1200]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "={{ $json.folderPath }}/{{ $json.date }}_{{ $json.topic }}_Final_Deliverable_Report.txt",
+        "data": "={{ $json.finalDeliverableReport }}"
+      },
+      "id": "storage-save-final-deliverable",
+      "name": "Storage - Save Final Deliverable Report",
+      "type": "n8n-nodes-base.awsS3",
+      "typeVersion": 1,
+      "position": [7150, 1000],
+      "credentials": {
+        "aws": {
+          "id": "2",
+          "name": "AWS S3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "={{ $json.folderPath }}/{{ $json.date }}_{{ $json.topic }}_Final_Report_Generation_Audit_Trail.txt",
+        "data": "={{ $json.auditTrail }}"
+      },
+      "id": "storage-save-audit-trail",
+      "name": "Storage - Save Audit Trail",
+      "type": "n8n-nodes-base.awsS3",
+      "typeVersion": 1,
+      "position": [7150, 1200],
+      "credentials": {
+        "aws": {
+          "id": "2",
+          "name": "AWS S3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.convertapi.com/v2/convert/txt/to/pdf",
+        "authentication": "genericCredentialType",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "values": [
+            {
+              "name": "File",
+              "value": "={{ $json.finalDeliverableReport }}"
+            }
+          ]
+        }
+      },
+      "id": "convert-to-pdf",
+      "name": "Convert - Generate PDF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [7450, 900]
+    },
+    {
+      "parameters": {
+        "url": "https://api.convertapi.com/v2/convert/txt/to/docx",
+        "authentication": "genericCredentialType",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "values": [
+            {
+              "name": "File",
+              "value": "={{ $json.finalDeliverableReport }}"
+            }
+          ]
+        }
+      },
+      "id": "convert-to-docx",
+      "name": "Convert - Generate DOCX",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [7450, 1100]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "={{ $json.folderPath }}/{{ $json.date }}_{{ $json.topic }}_Final_Deliverable_Report.pdf",
+        "data": "={{ $json.pdf_data }}"
+      },
+      "id": "storage-save-pdf",
+      "name": "Storage - Save PDF",
+      "type": "n8n-nodes-base.awsS3",
+      "typeVersion": 1,
+      "position": [7750, 900],
+      "credentials": {
+        "aws": {
+          "id": "2",
+          "name": "AWS S3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "={{ $json.folderPath }}/{{ $json.date }}_{{ $json.topic }}_Final_Deliverable_Report.docx",
+        "data": "={{ $json.docx_data }}"
+      },
+      "id": "storage-save-docx",
+      "name": "Storage - Save DOCX",
+      "type": "n8n-nodes-base.awsS3",
+      "typeVersion": 1,
+      "position": [7750, 1100],
+      "credentials": {
+        "aws": {
+          "id": "2",
+          "name": "AWS S3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst folderPath = item.json.folderPath;\nconst date = item.json.date;\nconst topic = item.json.topic;\n\nconst downloadUrls = {\n  pdf: `https://yourstorage.com/${folderPath}/${date}_${topic}_Final_Deliverable_Report.pdf`,\n  docx: `https://yourstorage.com/${folderPath}/${date}_${topic}_Final_Deliverable_Report.docx`,\n  txt: `https://yourstorage.com/${folderPath}/${date}_${topic}_Final_Deliverable_Report.txt`,\n  auditTrail: `https://yourstorage.com/${folderPath}/${date}_${topic}_Final_Report_Generation_Audit_Trail.txt`\n};\n\nreturn {\n  json: {\n    ...item.json,\n    downloadUrls: downloadUrls\n  }\n};"
+      },
+      "id": "code-generate-download-urls",
+      "name": "Code - Generate Download URLs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [8050, 1000]
+    },
+    {
+      "parameters": {
+        "fromEmail": "noreply@yourplatform.com",
+        "toEmail": "={{ $json.email }}",
+        "subject": "Your Query Results - {{ $json.topic }}",
+        "emailFormat": "html",
+        "text": "<!DOCTYPE html><html><body><h2>Your Query Results are Ready</h2><p>Dear User,</p><p>Your query has been processed successfully. Please find your results below:</p><h3>Download Links:</h3><ul><li><a href=\"{{ $json.downloadUrls.pdf }}\">Download PDF Report</a></li><li><a href=\"{{ $json.downloadUrls.docx }}\">Download DOCX Report</a></li><li><a href=\"{{ $json.downloadUrls.txt }}\">Download Text Report</a></li><li><a href=\"{{ $json.downloadUrls.auditTrail }}\">Download Audit Trail</a></li></ul><p>Thank you for using our service!</p></body></html>",
+        "options": {
+          "attachments": "={{ $json.folderPath }}/{{ $json.date }}_{{ $json.topic }}_Final_Deliverable_Report.pdf"
+        }
+      },
+      "id": "email-send-results",
+      "name": "Email - Send Results to User",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [8350, 1000],
+      "credentials": {
+        "smtp": {
+          "id": "5",
+          "name": "SMTP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "table": "query_memory",
+        "columns": "user_id, query_text, final_deliverable, audit_trail, folder_path, created_at",
+        "values": "={{ $json.userId }},={{ $json.query }},={{ $json.finalDeliverableReport }},={{ $json.auditTrail }},={{ $json.folderPath }},={{ $now }}"
+      },
+      "id": "db-update-memory",
+      "name": "DB - Update Memory for RAG",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [8650, 1000],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "PostgreSQL Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "update",
+        "table": "users",
+        "where": "id = {{ $json.userId }}",
+        "columns": "trial_balance",
+        "values": "={{ $json.trial_balance - $json.queryCost }}"
+      },
+      "id": "db-deduct-balance",
+      "name": "DB - Deduct Query Cost from Balance",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [8650, 1200],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "PostgreSQL Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": true, \"queryId\": $json.queryId, \"message\": \"Query processed successfully\", \"downloadUrls\": $json.downloadUrls, \"remainingBalance\": $json.trial_balance - $json.queryCost } }}"
+      },
+      "id": "respond-query-success",
+      "name": "Respond - Query Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [8950, 1000]
+    },
+    {
+      "parameters": {
+        "url": "https://api.stripe.com/v1/payment_intents",
+        "authentication": "genericCredentialType",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "values": [
+            {
+              "name": "amount",
+              "value": "={{ $json.amount * 100 }}"
+            },
+            {
+              "name": "currency",
+              "value": "usd"
+            },
+            {
+              "name": "customer",
+              "value": "={{ $json.stripeCustomerId }}"
+            }
+          ]
+        }
+      },
+      "id": "stripe-process-payment",
+      "name": "Stripe - Process Payment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [550, 2800],
+      "credentials": {
+        "stripeApi": {
+          "id": "6",
+          "name": "Stripe"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "update",
+        "table": "users",
+        "where": "id = {{ $json.userId }}",
+        "columns": "trial_balance",
+        "values": "={{ $json.trial_balance + $json.amount }}"
+      },
+      "id": "db-add-funds",
+      "name": "DB - Add Funds to Balance",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [850, 2800],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "PostgreSQL Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": true, \"message\": \"Funds added successfully\", \"newBalance\": $json.trial_balance + $json.amount } }}"
+      },
+      "id": "respond-add-funds-success",
+      "name": "Respond - Add Funds Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1150, 2800]
+    },
+    {
+      "parameters": {
+        "mode": "select",
+        "table": "query_memory",
+        "where": "user_id = {{ $json.userId }}",
+        "returnAll": true,
+        "options": {
+          "orderBy": "created_at DESC"
+        }
+      },
+      "id": "db-get-chat-history",
+      "name": "DB - Get Chat History",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [550, 3200],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "PostgreSQL Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": true, \"chatHistory\": $json } }}"
+      },
+      "id": "respond-chat-history",
+      "name": "Respond - Chat History",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [850, 3200]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "admin/dashboard",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-admin-dashboard",
+      "name": "Webhook - Admin Dashboard",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 3600],
+      "webhookId": "admin-dashboard"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Get daily active users\nconst dauQuery = `SELECT COUNT(DISTINCT user_id) as dau FROM query_memory WHERE DATE(created_at) = CURRENT_DATE`;\n\n// Get daily query count\nconst queryCountQuery = `SELECT COUNT(*) as daily_queries FROM query_memory WHERE DATE(created_at) = CURRENT_DATE`;\n\n// Get revenue statistics\nconst revenueQuery = `SELECT SUM(amount) as daily_revenue FROM transactions WHERE DATE(created_at) = CURRENT_DATE`;\n\nreturn [\n  {\n    json: {\n      dauQuery,\n      queryCountQuery,\n      revenueQuery\n    }\n  }\n];"
+      },
+      "id": "code-admin-dashboard-queries",
+      "name": "Code - Admin Dashboard Queries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [550, 3600]
+    },
+    {
+      "parameters": {
+        "mode": "select",
+        "query": "={{ $json.dauQuery }}"
+      },
+      "id": "db-get-dau",
+      "name": "DB - Get Daily Active Users",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [850, 3500],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "PostgreSQL Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "select",
+        "query": "={{ $json.queryCountQuery }}"
+      },
+      "id": "db-get-query-count",
+      "name": "DB - Get Daily Query Count",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [850, 3650],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "PostgreSQL Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "select",
+        "query": "={{ $json.revenueQuery }}"
+      },
+      "id": "db-get-revenue",
+      "name": "DB - Get Daily Revenue",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [850, 3800],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "PostgreSQL Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "mergeByPosition"
+      },
+      "id": "merge-admin-stats",
+      "name": "Merge - Admin Stats",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1150, 3600]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": true, \"dashboard\": { \"dailyActiveUsers\": $json.dau, \"dailyQueryCount\": $json.daily_queries, \"dailyRevenue\": $json.daily_revenue } } }}"
+      },
+      "id": "respond-admin-dashboard",
+      "name": "Respond - Admin Dashboard",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1450, 3600]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "admin/update-pricing",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-update-pricing",
+      "name": "Webhook - Update Pricing",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 4000],
+      "webhookId": "update-pricing"
+    },
+    {
+      "parameters": {
+        "mode": "update",
+        "table": "pricing_config",
+        "where": "id = 1",
+        "columns": "query_cost",
+        "values": "={{ $json.newQueryCost }}"
+      },
+      "id": "db-update-pricing",
+      "name": "DB - Update Query Pricing",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [550, 4000],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "PostgreSQL Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": true, \"message\": \"Pricing updated successfully\" } }}"
+      },
+      "id": "respond-pricing-updated",
+      "name": "Respond - Pricing Updated",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [850, 4000]
+    }
+  ],
+  "connections": {
+    "webhook-user-registration": {
+      "main": [
+        [
+          {
+            "node": "db-create-user",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "db-create-user": {
+      "main": [
+        [
+          {
+            "node": "respond-registration-success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "webhook-submit-query": {
+      "main": [
+        [
+          {
+            "node": "db-check-user-balance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "db-check-user-balance": {
+      "main": [
+        [
+          {
+            "node": "if-balance-zero",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "if-balance-zero": {
+      "main": [
+        [
+          {
+            "node": "respond-insufficient-balance",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "if-balance-low",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "if-balance-low": {
+      "main": [
+        [
+          {
+            "node": "code-generate-folder-path",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "code-generate-folder-path",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "code-generate-folder-path": {
+      "main": [
+        [
+          {
+            "node": "storage-save-query",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "storage-save-attachments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "storage-save-query": {
+      "main": [
+        [
+          {
+            "node": "db-search-memory-rag",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "db-search-memory-rag": {
+      "main": [
+        [
+          {
+            "node": "code-prepare-rag-context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "code-prepare-rag-context": {
+      "main": [
+        [
+          {
+            "node": "llm-chatgpt-5",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "llm-claude-sonnet-45",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "llm-grok-40",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "llm-gemini-25",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "llm-chatgpt-5": {
+      "main": [
+        [
+          {
+            "node": "merge-llm-outputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "llm-claude-sonnet-45": {
+      "main": [
+        [
+          {
+            "node": "merge-llm-outputs",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "llm-grok-40": {
+      "main": [
+        [
+          {
+            "node": "merge-llm-outputs",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "llm-gemini-25": {
+      "main": [
+        [
+          {
+            "node": "merge-llm-outputs",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "merge-llm-outputs": {
+      "main": [
+        [
+          {
+            "node": "code-structure-llm-outputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "code-structure-llm-outputs": {
+      "main": [
+        [
+          {
+            "node": "storage-save-gpt-output",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "storage-save-claude-output",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "storage-save-grok-output",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "storage-save-gemini-output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "storage-save-claude-output": {
+      "main": [
+        [
+          {
+            "node": "moderator-1-consolidation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "moderator-1-consolidation": {
+      "main": [
+        [
+          {
+            "node": "code-extract-consolidation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "code-extract-consolidation": {
+      "main": [
+        [
+          {
+            "node": "moderator-1-analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "moderator-1-analysis": {
+      "main": [
+        [
+          {
+            "node": "code-extract-analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "code-extract-analysis": {
+      "main": [
+        [
+          {
+            "node": "storage-save-initial-report",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "storage-save-analysis-report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "storage-save-analysis-report": {
+      "main": [
+        [
+          {
+            "node": "moderator-2-verification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "moderator-2-verification": {
+      "main": [
+        [
+          {
+            "node": "code-extract-verification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "code-extract-verification": {
+      "main": [
+        [
+          {
+            "node": "storage-save-verification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "storage-save-verification": {
+      "main": [
+        [
+          {
+            "node": "moderator-1-final-deliverable",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "generate-audit-trail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "moderator-1-final-deliverable": {
+      "main": [
+        [
+          {
+            "node": "code-extract-final-deliverable",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "generate-audit-trail": {
+      "main": [
+        [
+          {
+            "node": "code-extract-audit-trail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "code-extract-final-deliverable": {
+      "main": [
+        [
+          {
+            "node": "storage-save-final-deliverable",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "convert-to-pdf",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "convert-to-docx",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "code-extract-audit-trail": {
+      "main": [
+        [
+          {
+            "node": "storage-save-audit-trail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "convert-to-pdf": {
+      "main": [
+        [
+          {
+            "node": "storage-save-pdf",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "convert-to-docx": {
+      "main": [
+        [
+          {
+            "node": "storage-save-docx",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "storage-save-pdf": {
+      "main": [
+        [
+          {
+            "node": "code-generate-download-urls",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "code-generate-download-urls": {
+      "main": [
+        [
+          {
+            "node": "email-send-results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "email-send-results": {
+      "main": [
+        [
+          {
+            "node": "db-update-memory",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "db-deduct-balance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "db-update-memory": {
+      "main": [
+        [
+          {
+            "node": "respond-query-success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "webhook-add-funds": {
+      "main": [
+        [
+          {
+            "node": "stripe-process-payment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "stripe-process-payment": {
+      "main": [
+        [
+          {
+            "node": "db-add-funds",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "db-add-funds": {
+      "main": [
+        [
+          {
+            "node": "respond-add-funds-success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "webhook-get-chat-history": {
+      "main": [
+        [
+          {
+            "node": "db-get-chat-history",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "db-get-chat-history": {
+      "main": [
+        [
+          {
+            "node": "respond-chat-history",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "webhook-admin-dashboard": {
+      "main": [
+        [
+          {
+            "node": "code-admin-dashboard-queries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "code-admin-dashboard-queries": {
+      "main": [
+        [
+          {
+            "node": "db-get-dau",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "db-get-query-count",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "db-get-revenue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "db-get-dau": {
+      "main": [
+        [
+          {
+            "node": "merge-admin-stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "db-get-query-count": {
+      "main": [
+        [
+          {
+            "node": "merge-admin-stats",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "db-get-revenue": {
+      "main": [
+        [
+          {
+            "node": "merge-admin-stats",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "merge-admin-stats": {
+      "main": [
+        [
+          {
+            "node": "respond-admin-dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "webhook-update-pricing": {
+      "main": [
+        [
+          {
+            "node": "db-update-pricing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "db-update-pricing": {
+      "main": [
+        [
+          {
+            "node": "respond-pricing-updated",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-11-05T00:00:00.000Z",
+  "versionId": "1"
+}
